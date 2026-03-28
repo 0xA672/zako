@@ -3,6 +3,7 @@ use std::io::{BufRead, BufReader, Error, Write};
 use std::process::Command;
 use walkdir::WalkDir;
 use std::path::PathBuf;
+use std::fs::File;
 
 
 fn pwd() -> std::io::Result<PathBuf> {
@@ -14,21 +15,26 @@ fn zig(){
 }
 
 fn scandir() -> std::io::Result<Vec<PathBuf>> {
-    let cwd: PathBuf = pwd()?;
+    let mut cwd: PathBuf = pwd()?;
     let mut pathofzigzon: Vec<_> = Vec::<PathBuf>::new();
-    loop {
+    let r = loop {
        let potential: PathBuf = cwd.join("build.zig.zon");
        if potential.exists() {
         pathofzigzon.push(potential);
        }
-    }
+       if let Some(cddotdot) =  cwd.parent() {
+           cwd = cddotdot.to_owned();
+       }else { break pathofzigzon }
+    };
+    Ok(r)
 }
 
-fn scanzon() {
+fn scanzon()  {
     let r: Result<Vec<PathBuf>, Error> = scandir();
     match r {
         Ok(path) => {
         for i in path {
+           let mut output = File::open(i);
            
         }
       }
@@ -37,7 +43,6 @@ fn scanzon() {
       }
     }
 
-    let mut output = File::create()?;
 }
 
 fn main(){
