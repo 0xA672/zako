@@ -9,20 +9,35 @@ fn pwd() -> std::io::Result<PathBuf> {
     env::current_dir()
 }
 
+fn zig(){
+
+}
+
 fn scandir() -> std::io::Result<Vec<PathBuf>> {
-    let cwd = pwd()?;
-    let mut pathofzigzon = Vec::new();
-    for i in WalkDir::new(cwd) {
-        let i = i.map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e))?;///turn walkdir::Error into ErrorKind::Other
-        if i.file_name() == "build.zig.zon" {
-            pathofzigzon.push(i.into_path());
-        }
+    let cwd: PathBuf = pwd()?;
+    let mut pathofzigzon: Vec<_> = Vec::<PathBuf>::new();
+    loop {
+       let potential: PathBuf = cwd.join("build.zig.zon");
+       if potential.exists() {
+        pathofzigzon.push(potential);
+       }
     }
-    Ok(pathofzigzon)
 }
 
 fn scanzon() {
-    let path = scandir();
+    let r: Result<Vec<PathBuf>, Error> = scandir();
+    match r {
+        Ok(path) => {
+        for i in path {
+           
+        }
+      }
+      Err(e) => {
+        eprintln!("{}!",e)
+      }
+    }
+
+    let mut output = File::create()?;
 }
 
 fn main(){
