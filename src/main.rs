@@ -31,7 +31,7 @@ fn scandir() -> std::io::Result<Vec<PathBuf>> {
        }else { break pathofzigzon }
     };
     Ok(r)
-}
+} 
 
 fn scanzon()  {
     let r: Result<Vec<PathBuf>, Error> = scandir();
