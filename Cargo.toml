@@ -6,3 +6,4 @@ edition = "2024"
 [dependencies]
 walkdir = "2.5.0"
 zon = "0.0.4"
+clap = { version = "4", features = ["derive"] }

@@ -229,7 +229,6 @@ impl<'a> Lexer<'a> {
                     self.bump();
                     Ok(Token::DotLBrace)
                 } else if let Some(b) = self.peekbyte() {
-                    // 如果 . 后面是字母或下划线，则是 ZON 字段名
                     if b.is_ascii_alphabetic() || b == b'_' {
                         let ident = self.read_ident();
                         Ok(Token::Ident(ident))
