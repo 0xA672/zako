@@ -1,6 +1,9 @@
+use std::borrow::Cow;
+use std::str;
+
 #[derive(Debug, Clone, PartialEq)]
 pub enum Token<'a> {
-    String(&'a str),
+    String(Cow<'a, str>),
     Number(f64),
     Bool(bool),
     Null,
@@ -19,34 +22,48 @@ pub enum Token<'a> {
 }
 
 pub struct Lexer<'a> {
-    input: &'a [u8],
+    inp: &'a [u8],
     pos: usize,
+    line: usize,
+    col: usize,
 }
 
 impl<'a> Lexer<'a> {
-    pub fn new(input: &'a str) -> Self {
-        Lexer {
-            input: input.as_bytes(),
+    pub fn new(s: &'a str) -> Self {
+        Self {
+            inp: s.as_bytes(),
             pos: 0,
+            line: 1,
+            col: 1,
         }
     }
 
     fn bump(&mut self) -> Option<u8> {
-        if self.pos < self.input.len() {
-            let byte = self.input[self.pos];
+        if self.pos < self.inp.len() {
+            let b = self.inp[self.pos];
             self.pos += 1;
-            Some(byte)
+            if b == b'\n' {
+                self.line += 1;
+                self.col = 1;
+            } else {
+                self.col += 1;
+            }
+            Some(b)
         } else {
             None
         }
     }
 
-    fn peekbyte(&self) -> Option<u8> {
-        self.input.get(self.pos).copied()
+    fn peek(&self) -> Option<u8> {
+        self.inp.get(self.pos).copied()
     }
 
-    fn skipwhitespace(&mut self) {
-        while let Some(b) = self.peekbyte() {
+    fn err<T>(&self, msg: String) -> Result<T, String> {
+        Err(format!("{} at line {} col {}", msg, self.line, self.col))
+    }
+
+    fn skip_ws(&mut self) {
+        while let Some(b) = self.peek() {
             if b.is_ascii_whitespace() {
                 self.bump();
             } else {
@@ -55,103 +72,119 @@ impl<'a> Lexer<'a> {
         }
     }
 
-    fn skipcomment(&mut self) -> bool {
-        if self.peekbyte() != Some(b'/') {
-            return false;
+    fn skip_cmt(&mut self) -> Result<bool, String> {
+        if self.peek() != Some(b'/') {
+            return Ok(false);
         }
-        match self.input.get(self.pos + 1).copied() {
+        match self.inp.get(self.pos + 1).copied() {
             Some(b'/') => {
                 self.bump();
                 self.bump();
-                while let Some(b) = self.peekbyte() {
+                while let Some(b) = self.peek() {
                     if b == b'\n' {
                         self.bump();
                         break;
                     }
                     self.bump();
                 }
-                true
+                Ok(true)
             }
             Some(b'*') => {
                 self.bump();
                 self.bump();
-                let mut depth = 1;
-                while depth > 0 {
-                    match self.peekbyte() {
+                let mut d = 1;
+                while d > 0 {
+                    match self.peek() {
                         Some(b'*') => {
                             self.bump();
-                            if self.peekbyte() == Some(b'/') {
+                            if self.peek() == Some(b'/') {
                                 self.bump();
-                                depth -= 1;
+                                d -= 1;
                             }
                         }
                         Some(b'/') => {
                             self.bump();
-                            if self.peekbyte() == Some(b'*') {
+                            if self.peek() == Some(b'*') {
                                 self.bump();
-                                depth += 1;
+                                d += 1;
                             }
                         }
                         Some(_) => {
                             self.bump();
                         }
-                        None => break,
+                        None => return self.err("unclosed block comment".into()),
                     }
                 }
-                true
+                Ok(true)
             }
-            _ => false,
+            _ => Ok(false),
         }
     }
 
-    fn read_ident(&mut self) -> &'a str {
-        let start = self.pos;
-        // Zig ZON 格式中，字段名可以 . 开头，如 .name、.url
-        if self.peekbyte() == Some(b'.') {
+    fn rd_id(&mut self) -> &'a str {
+        let s = self.pos;
+        if self.peek() == Some(b'.') {
             self.bump();
         }
-        while let Some(b) = self.peekbyte() {
+        while let Some(b) = self.peek() {
             if b.is_ascii_alphanumeric() || b == b'_' {
                 self.bump();
             } else {
                 break;
             }
         }
-        std::str::from_utf8(&self.input[start..self.pos]).unwrap()
+        str::from_utf8(&self.inp[s..self.pos]).unwrap()
     }
 
-    fn read_string(&mut self) -> Result<&'a str, String> {
-        self.bump();
-        let start = self.pos;
-        while let Some(b) = self.peekbyte() {
+    fn rd_str(&mut self) -> Result<Cow<'a, str>, String> {
+        self.bump(); // '"'
+        let mut v = Vec::new();
+        let s = self.pos;
+        while let Some(b) = self.peek() {
             if b == b'"' {
-                let result = std::str::from_utf8(&self.input[start..self.pos]).unwrap();
+                let r = if v.is_empty() {
+                    Cow::Borrowed(str::from_utf8(&self.inp[s..self.pos]).unwrap())
+                } else {
+                    v.extend_from_slice(&self.inp[s..self.pos]);
+                    Cow::Owned(String::from_utf8_lossy(&v).into_owned())
+                };
                 self.bump();
-                return Ok(result);
+                return Ok(r);
             }
             if b == b'\\' {
-                return Err("Escape sequences not supported in zero-copy mode".into());
+                v.extend_from_slice(&self.inp[s..self.pos]);
+                self.bump();
+                match self.bump() {
+                    Some(b'"') => v.push(b'"'),
+                    Some(b'\\') => v.push(b'\\'),
+                    Some(b'n') => v.push(b'\n'),
+                    Some(b'r') => v.push(b'\r'),
+                    Some(b't') => v.push(b'\t'),
+                    Some(c) => return self.err(format!("unknown escape \\{}", c as char)),
+                    None => return self.err("unclosed string escape".into()),
+                }
+                continue;
             }
             self.bump();
         }
-        Err("Unclosed string".into())
+        self.err("unclosed string".into())
     }
 
-    fn read_number(&mut self) -> f64 {
-        let start = self.pos;
-        if self.peekbyte() == Some(b'-') {
+    fn rd_num(&mut self) -> Result<f64, String> {
+        let s = self.pos;
+        if self.peek() == Some(b'-') {
             self.bump();
         }
-        while let Some(b) = self.peekbyte() {
+        while let Some(b) = self.peek() {
             if b.is_ascii_digit() {
                 self.bump();
             } else {
                 break;
             }
         }
-        if self.peekbyte() == Some(b'.') {
+        if self.peek() == Some(b'.') {
             self.bump();
-            while let Some(b) = self.peekbyte() {
+            while let Some(b) = self.peek() {
                 if b.is_ascii_digit() {
                     self.bump();
                 } else {
@@ -159,13 +192,13 @@ impl<'a> Lexer<'a> {
                 }
             }
         }
-        if let Some(b) = self.peekbyte() {
+        if let Some(b) = self.peek() {
             if b == b'e' || b == b'E' {
                 self.bump();
-                if let Some(b'+') | Some(b'-') = self.peekbyte() {
+                if let Some(b'+') | Some(b'-') = self.peek() {
                     self.bump();
                 }
-                while let Some(b) = self.peekbyte() {
+                while let Some(b) = self.peek() {
                     if b.is_ascii_digit() {
                         self.bump();
                     } else {
@@ -174,22 +207,22 @@ impl<'a> Lexer<'a> {
                 }
             }
         }
-        let slice = &self.input[start..self.pos];
-        std::str::from_utf8(slice).unwrap().parse().unwrap()
+        let slice = &self.inp[s..self.pos];
+        let txt = str::from_utf8(slice).unwrap();
+        txt.parse::<f64>().map_err(|_| format!("invalid number '{}'", txt))
     }
 
-    pub fn next_token(&mut self) -> Result<Token<'a>, String> {
+    pub fn next(&mut self) -> Result<Token<'a>, String> {
         loop {
-            self.skipwhitespace();
-            if !self.skipcomment() {
+            self.skip_ws();
+            if !self.skip_cmt()? {
                 break;
             }
         }
-        let b = match self.peekbyte() {
+        let b = match self.peek() {
             Some(b) => b,
             None => return Ok(Token::Eof),
         };
-
         match b {
             b'{' => {
                 self.bump();
@@ -224,40 +257,34 @@ impl<'a> Lexer<'a> {
                 Ok(Token::Equal)
             }
             b'.' => {
-                self.bump();
-                if self.peekbyte() == Some(b'{') {
+                if self.inp.get(self.pos + 1) == Some(&b'{') {
+                    self.bump();
                     self.bump();
                     Ok(Token::DotLBrace)
-                } else if let Some(b) = self.peekbyte() {
-                    if b.is_ascii_alphabetic() || b == b'_' {
-                        let ident = self.read_ident();
-                        Ok(Token::Ident(ident))
-                    } else {
-                        Err("Unexpected '.'".into())
-                    }
                 } else {
-                    Err("Unexpected '.'".into())
+                    let id = self.rd_id();
+                    Ok(Token::Ident(id))
                 }
             }
             b'"' => {
-                let s = self.read_string()?;
+                let s = self.rd_str()?;
                 Ok(Token::String(s))
             }
             b'a'..=b'z' | b'A'..=b'Z' | b'_' => {
-                let ident = self.read_ident();
-                match ident {
+                let id = self.rd_id();
+                match id {
                     "true" => Ok(Token::Bool(true)),
                     "false" => Ok(Token::Bool(false)),
                     "null" => Ok(Token::Null),
                     "const" => Ok(Token::Const),
-                    _ => Ok(Token::Ident(ident)),
+                    _ => Ok(Token::Ident(id)),
                 }
             }
             b'0'..=b'9' | b'-' => {
-                let num = self.read_number();
-                Ok(Token::Number(num))
+                let n = self.rd_num()?;
+                Ok(Token::Number(n))
             }
-            _ => Err(format!("Unexpected byte: {}", b)),
+            _ => self.err(format!("unexpected char '{}'", b as char)),
         }
     }
 }
